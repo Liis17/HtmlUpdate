@@ -49,13 +49,22 @@ internal class Program
         app.MapGet("/", async context =>
         {
             string html = await File.ReadAllTextAsync(filePath);
-            string script = @"
-                <script>
-                    const ws = new WebSocket('ws://' + location.host + '/ws');
-                    ws.onmessage = (event) => {
-                        if (event.data === 'reload') location.reload();
-                    };
-                </script>";
+            string script = @"<script>
+    let ws;
+    function connect() {
+        ws = new WebSocket('ws://' + location.host + '/ws');
+        ws.onmessage = (event) => {
+            if (event.data === 'reload') location.reload();
+        };
+        ws.onclose = () => {
+            setTimeout(connect, 1000); // Переподключение через 1 сек
+        };
+        ws.onerror = () => {
+            ws.close();
+        };
+    }
+    connect();
+</script>";
             html = html.Replace("</body>", script + "</body>");
             await context.Response.WriteAsync(html);
         });
@@ -67,6 +76,17 @@ internal class Program
             {
                 var ws = await context.WebSockets.AcceptWebSocketAsync();
                 clients.Add(ws);
+
+                var buffer = new byte[4096];
+                while (ws.State == WebSocketState.Open)
+                {
+                    var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), default);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, default);
+                    }
+                }
+                clients.Remove(ws);
                 await Task.Delay(-1);
             }
             else
